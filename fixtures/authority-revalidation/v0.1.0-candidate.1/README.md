@@ -63,6 +63,10 @@ Action A is exactly one invocation of T to write report R to S. R is the UTF-8
 bytes of `synthetic report` followed by LF. S is a synthetic append-only sink:
 each accepted write adds one independently observed entry. A second identical
 write is still a second effect. No real external service or resource is used.
+The logical entry is `{run_id, attempt_id, payload_bytes}`. H/the tool adapter
+binds the two identity fields as trusted observation metadata outside R; only
+`payload_bytes` contains the exact R bytes. An equivalent evidence mapping is
+allowed, but identity must not be inferred from identical report contents.
 
 The subject, A, T, S, R, scope, revocation state and all unrelated release
 prerequisites are held fixed. There is no delegation or cumulative budget in
@@ -144,13 +148,34 @@ Ground truth from `baselines`, `grants` and the full schedule belongs to H; it
 cannot bypass this projection simply because it appears in the input file.
 The evaluator may know the true baseline even when the implementation cannot.
 
-H delivers the allowed records at the prescribed barriers and waits for
-admission before advancing. A baseline remains fixed throughout each release
-attempt and until that attempt is complete. V3 admits G1 bound to B1, then H
-changes the baseline to B2, and only then requests action release. The release
-snapshot is B2. A previously admitted successful G1 decision for B1 is not a
-current applicability decision for B2. This deterministic ordering tests stale
-decision reuse; it does not claim to exercise every internal race.
+The schedule events have these normative, blocking semantics:
+
+- Before the schedule, H delivers `authority_source` and `materiality_policy`
+  when allowed, and waits for acknowledgement of those delivered records.
+- `activate_baseline` changes H's ground truth. It does not itself deliver a
+  record to the implementation or bypass an omitted observation category.
+- `issue_grant` issues the D authorization and delivers its `grant_header` and
+  `grant_baseline_binding`, restricted to the run's allowlist. It is complete
+  only after the implementation acknowledges admission of those delivered
+  records. No later schedule event may execute before that acknowledgement.
+- `release_attempt` delivers the allowed, attempt-bound `release_baseline` and
+  `revocation_observation`, obtains their admission acknowledgement, and requests
+  evaluation/release using the selected grant. It finishes only at the completion
+  boundary below, before the next schedule event.
+
+Admission acknowledgement establishes receipt/acceptance of a supplied source
+record, not applicability or permission to execute A. It must not require or
+fabricate an omitted category. Failure to acknowledge a delivered record is an
+execution/completion problem, not an expected omitted-evidence outcome. The
+30-second watchdog also bounds each pre-release admission barrier; it is not
+reset by retries or partial progress.
+
+A baseline remains fixed throughout each release attempt and until that attempt
+is complete. In V3, `issue_grant` for G1 must therefore admit its B1 binding before
+H activates B2 and requests action release. The release snapshot is B2. An
+admitted G1 authorization for B1 is not a current applicability decision for B2;
+no successful B1 applicability result is stipulated. This deterministic ordering
+tests reuse of stale authorization evidence, not every internal race.
 
 Each attempt has a 30-second wall-clock watchdog for completion, not a latency
 benchmark. Completion requires a result, an independently observed sink and a
@@ -199,8 +224,9 @@ Each attempt must match every authored field in `expected.json`. The `oracle_*`
 fields are evaluator-only truth, not required assertions by the implementation.
 All other outcome fields must be observable in the result or its declared
 evidence mapping. Reported source facts must also match the admitted inputs;
-scope and expiry cannot change because an applicability check ran. A permitted attempt creates exactly one S entry carrying the
-exact R bytes and that attempt's identity; a withheld attempt creates zero.
+scope and expiry cannot change because an applicability check ran. A permitted
+attempt creates exactly one S entry carrying the exact R payload and that
+attempt's identity in the separate metadata; a withheld attempt creates zero.
 Each run's complete sink count must also match, with no unassigned, duplicated,
 late or cross-run writes. Merely recording `permit` or `withhold` is insufficient.
 
